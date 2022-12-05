@@ -33,8 +33,7 @@ typedef enum e_S_value_type {
     S_VALUE_TYPE_NUMBER,
     S_VALUE_TYPE_OBJECT,
     S_VALUE_TYPE_ARRAY,
-    S_VALUE_TYPE_TRUE,
-    S_VALUE_TYPE_FALSE,
+    S_VALUE_TYPE_BOOLEAN,
     S_VALUE_TYPE_NULL
 } S_value_type_t;
 
@@ -255,6 +254,108 @@ static S_number_t *S_parse_number(S_ctx *ctx) {
 
 /* ------------------------------------------------ */
 
+/* -------------------- Boolean -------------------- */
+
+typedef struct {
+    S_value_t     this_value;
+    unsigned char value;
+} S_boolean_t;
+
+static S_boolean_t *S_boolean_create(void) {
+    S_boolean_t *b;
+
+    b = malloc(sizeof *b);
+    if (b == NULL) {
+        return NULL;
+    }
+    b->this_value.type = S_VALUE_TYPE_BOOLEAN;
+    b->value = 0;
+    return b;
+}
+
+static void S_boolean_destroy(S_boolean_t **b) {
+    free(*b);
+    *b = NULL;
+}
+
+static S_boolean_t *S_parse_boolean(S_ctx *ctx) {
+    S_boolean_t *b;
+
+    b = S_boolean_create();
+    if (b == NULL) {
+        return NULL;
+    }
+    if (*ctx->ptr == 't') {
+        if (ctx->ptr + 4 >= ctx->end) {
+            S_boolean_destroy(&b);
+            return NULL;
+        }
+        if (strncmp(ctx->ptr, "true", 4) != 0) {
+            S_boolean_destroy(&b);
+            return NULL;
+        }
+        ctx->ptr += 4;
+        b->value = 1;
+    } else if (*ctx->ptr == 'f') {
+        if (ctx->ptr + 5 >= ctx->end) {
+            S_boolean_destroy(&b);
+            return NULL;
+        }
+        if (strncmp(ctx->ptr, "false", 5) != 0) {
+            S_boolean_destroy(&b);
+            return NULL;
+        }
+        ctx->ptr += 5;
+        b->value = 0;
+    } else {
+        S_boolean_destroy(&b);
+        return NULL;
+    }
+    return b;
+}
+
+/* ------------------------------------------------- */
+
+/* -------------------- Null -------------------- */
+
+typedef struct {
+    S_value_t this_value;
+} S_null_t;
+
+static S_null_t *S_null_create(void) {
+    S_null_t *n;
+
+    n = malloc(sizeof *n);
+    if (n == NULL) {
+        return NULL;
+    }
+    n->this_value.type = S_VALUE_TYPE_NULL;
+    return n;
+}
+
+static void S_null_destroy(S_null_t **n) {
+    free(*n);
+    *n = NULL;
+}
+
+static S_null_t *S_parse_null(S_ctx *ctx) {
+    S_null_t *n;
+
+    if (*ctx->ptr != 'n') {
+        return NULL;
+    }
+    n = S_null_create();
+    if (n == NULL) {
+        return NULL;
+    }
+    if (strncmp(ctx->ptr, "null", 4) != 0) {
+        S_null_destroy(&n);
+        return NULL;
+    }
+    ctx->ptr += 4;
+    return n;
+}
+
 /* -------------------- Object -------------------- */
 
 typedef struct s_S_object_entry {
@@ -342,7 +443,13 @@ static S_value_t *S_parse_value(S_ctx *ctx) {
         return S_parse_array(ctx);
     } else if (S_number_check_if_possible(*ctx->ptr)) {
         return S_parse_number(ctx);
-    } // TODO: Handle true, false, null
+    } else if (*ctx->ptr == 't' || *ctx->ptr == 'f') {
+        return S_parse_boolean(ctx);
+    } else if (*ctx->ptr == 'n') {
+        return S_parse_null(ctx);
+    } else {
+        return NULL;
+    }
 }
 
 static void S_value_destroy(S_value_t **value) {
