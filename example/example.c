@@ -4,9 +4,15 @@
 
 int main(void)
 {
-    char *test2 = "{\"test\":[]}";
-    char *test_json = "{\"test\" : [1, 2, 3, \"Test\"], \"test2\" : null, \"cool\" : { \"other_cool\" : \"dope\" } }";
-    S_object_t o = S_parse(test2, strlen(test2));
-    printf("%x\n", o);
+    S_error_code_t err;
+    char *test = "{\"test\" : [{\"test2\" : \"cool\"}, [{\"test3\" : 2}]], \"test4\" : true}";
+    
+    S_object_t o = S_parse(test, strlen(test));
+    S_array_t *a = S_object_get_array(o, "test", &err);
+    S_array_t *b = S_array_get_array(a, 1, &err);
+    S_object_t c = S_array_get_object(b, 0, &err);
+    double i = S_object_get_number(c, "test3", &err);
+
+    printf("%d %d\n", (int) i, (int) err);
     return 0;
 }

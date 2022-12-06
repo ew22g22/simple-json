@@ -4,6 +4,17 @@
 
 #define S_ISDIGIT(c) ((c) >= 0x30 && (c) <= 0x39)
 
+#define S_CHECK_VALUE(t, r)                   \
+    if (value == NULL) {                      \
+        return (r);                           \
+    }                                         \
+    if (value->type != (t)) {                 \
+        if (err) {                            \
+            *err = S_ERROR_CODE_INVALID_TYPE; \
+        }                                     \
+        return (r);                           \  
+    } 
+
 typedef struct {
     char *ptr;
     char *end;
@@ -102,7 +113,7 @@ static S_string_t *S_parse_string(S_ctx *ctx) {
 
 /* -------------------- Array -------------------- */
 
-typedef struct {
+typedef struct s_S_array {
     S_value_t this_value;
     S_value_t **values;
     size_t    num_values;
@@ -179,6 +190,9 @@ static S_array_t *S_parse_array(S_ctx *ctx) {
         if (S_skip_over_if_possible(ctx) == 0) {
             S_array_destroy(&arr);
             return NULL;
+        }
+        if (*ctx->ptr == ']') {
+            break;
         }
         value = S_parse_value(ctx);
         if (value == NULL) {
@@ -257,8 +271,8 @@ static S_number_t *S_parse_number(S_ctx *ctx) {
 /* -------------------- Boolean -------------------- */
 
 typedef struct {
-    S_value_t     this_value;
-    unsigned char value;
+    S_value_t this_value;
+    S_bool_t  value;
 } S_boolean_t;
 
 static S_boolean_t *S_boolean_create(void) {
@@ -402,6 +416,10 @@ static S_object_t S_parse_object(S_ctx *ctx) {
         S_object_destroy(&obj);
         return NULL;
     }
+    if (*ctx->ptr == '}') {
+        S_skip_over_if_possible(ctx);
+        return obj;
+    }
     obj->name = S_parse_string(ctx);
     if (obj->name == NULL) {
         S_object_destroy(&obj);
@@ -424,11 +442,16 @@ static S_object_t S_parse_object(S_ctx *ctx) {
     }
     S_skip_whitespace(ctx);
     if (*ctx->ptr == ',') {
+        //S_skip_over_if_possible(ctx);
         obj->next = S_parse_object(ctx);
+        if (obj->next == NULL) {
+            return NULL;
+        }
     } else if (*ctx->ptr != '}') {
         S_object_destroy(&obj);
         return NULL;
     }
+    S_skip_over_if_possible(ctx);
     return obj;
 }
 
@@ -478,4 +501,147 @@ S_object_t S_parse(char *data, size_t sz) {
     ctx.ptr = data;
     ctx.end = data + sz;
     return S_parse_object(&ctx);
+}
+
+S_value_t *S_object_get(S_object_t obj, const char *name, S_error_code_t *err)
+{
+    S_object_t curr;
+
+    for (curr = obj; curr != NULL; curr = curr->next) {
+        if (strcmp(curr->name->data, name) == 0) {
+            if (err) {
+                *err = S_ERROR_CODE_OK;
+            }
+            return curr->value;
+        }
+    }
+    if (err) {
+        *err = S_ERROR_CODE_OBJECT_NOT_FOUND;
+    }
+    return NULL;
+}
+
+S_bool_t S_object_get_bool(S_object_t obj, const char *name, S_error_code_t *err)
+{
+    S_value_t *value;
+
+    value = S_object_get(obj, name, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_BOOLEAN, 0)
+    return ((S_boolean_t *) value)->value;
+}
+
+double S_object_get_number(S_object_t obj, const char *name, S_error_code_t *err)
+{
+    S_value_t *value;
+
+    value = S_object_get(obj, name, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_NUMBER, 0.0)
+    return ((S_number_t *) value)->value;
+}
+
+S_object_t S_object_get_object(S_object_t obj, const char *name, S_error_code_t *err)
+{
+    S_value_t *value;
+
+    value = S_object_get(obj, name, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_OBJECT, NULL);
+    return value;
+}
+
+char *S_object_get_string(S_object_t obj, const char *name, S_error_code_t *err)
+{
+    S_value_t *value;
+    char      *s;
+
+    value = S_object_get(obj, name, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_STRING, NULL);
+    s = calloc(1, ((S_string_t *) value)->len + 1);
+    if (s == NULL) {
+        if (err) {
+            *err = S_ERROR_CODE_MALLOC_ERR;
+        }
+        return NULL;
+    }
+    memcpy(s, ((S_string_t *) value)->data, ((S_string_t *) value)->len + 1);
+    return s;
+}
+
+S_array_t *S_object_get_array(S_object_t obj, const char *name, S_error_code_t *err)
+{
+    S_value_t *value;
+
+    value = S_object_get(obj, name, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_ARRAY, NULL);
+    return value;
+}
+
+S_value_t *S_array_get(S_array_t *arr, size_t i, S_error_code_t *err)
+{
+    if (arr == NULL) {
+        if (err) {
+            *err = S_ERROR_CODE_OBJECT_NOT_FOUND;
+        }
+        return NULL;
+    }
+    if (arr->values == NULL || i >= arr->num_values) {
+        if (err) {
+            *err = S_ERROR_CODE_OUT_OF_BOUNDS;
+        }
+        return NULL;
+    }
+    return arr->values[i];
+}
+
+S_bool_t S_array_get_bool(S_array_t *arr, size_t i, S_error_code_t *err)
+{
+    S_value_t *value;
+
+    value = S_array_get(arr, i, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_BOOLEAN, 0);
+    return ((S_boolean_t *) value)->value;
+}
+
+double S_array_get_number(S_array_t *arr, size_t i, S_error_code_t *err)
+{
+    S_value_t *value;
+
+    value = S_array_get(arr, i, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_NUMBER, 0.0);
+    return ((S_number_t *) value)->value;
+}
+
+S_object_t S_array_get_object(S_array_t *arr, size_t i, S_error_code_t *err)
+{
+    S_value_t *value;
+    
+    value = S_array_get(arr, i, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_OBJECT, NULL);
+    return value;
+}
+
+char *S_array_get_string(S_array_t *arr, size_t i, S_error_code_t *err)
+{
+    S_value_t *value;
+    char      *s;
+
+    value = S_array_get(arr, i, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_STRING, NULL);
+    s = calloc(1, ((S_string_t *) value)->len + 1);
+    if (s == NULL) {
+        if (err) {
+            *err = S_ERROR_CODE_MALLOC_ERR;
+        }
+        return NULL;
+    }
+    memcpy(s, ((S_string_t *) value)->data, ((S_string_t *) value)->len + 1);
+    return s;
+}
+
+S_array_t *S_array_get_array(S_array_t *arr, size_t i, S_error_code_t *err)
+{
+    S_value_t *value;
+
+    value = S_array_get(arr, i, err);
+    S_CHECK_VALUE(S_VALUE_TYPE_ARRAY, NULL);
+    return value;
 }
