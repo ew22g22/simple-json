@@ -442,7 +442,6 @@ static S_object_t S_parse_object(S_ctx *ctx) {
     }
     S_skip_whitespace(ctx);
     if (*ctx->ptr == ',') {
-        //S_skip_over_if_possible(ctx);
         obj->next = S_parse_object(ctx);
         if (obj->next == NULL) {
             return NULL;
@@ -503,8 +502,95 @@ S_object_t S_parse(char *data, size_t sz) {
     return S_parse_object(&ctx);
 }
 
-S_value_t *S_object_get(S_object_t obj, const char *name, S_error_code_t *err)
-{
+typedef struct {
+    char   *data;
+    size_t len;
+    size_t size;
+} S_write_ctx_t;
+
+S_write_ctx_t S_write_ctx_create(void) {
+    S_write_ctx_t ctx;
+
+    ctx.len = 0;
+    ctx.size = 256;
+    ctx.data = malloc(ctx.size);
+    return ctx;
+}
+
+void S_write_ctx_destroy(S_write_ctx_t *ctx) {
+    if (ctx->data != NULL) {
+        free(ctx->data);
+        ctx->data = NULL;
+    }
+}
+
+int S_write_ctx_reallocate_if_needed(S_write_ctx_t *ctx, size_t extra) {
+    char *temp;
+
+    if (ctx->len + extra >= ctx->size - 1) {
+        ctx->size = 2 * (ctx->len + extra) + 1;
+        temp = realloc(ctx->data, ctx->size);
+        if (temp == NULL) {
+            S_write_ctx_destroy(ctx);
+            return 0;
+        }
+        ctx->data = temp;
+    }
+    return 1;
+}
+
+int S_write_add_string(S_write_ctx_t *ctx, const char *str) {
+    size_t len;
+
+    len = strlen(str);
+    if (S_write_ctx_reallocate_if_needed(ctx, len) == 0) {
+        return 0;
+    }
+    memcpy(&ctx->data[ctx->len], str, len);
+    return 1;
+}
+
+int S_write_object(S_write_ctx_t *ctx, S_object_t obj) {
+    if (S_write_add_string(ctx, "{") == 0) {
+        return 0;
+    }
+    if (obj->name == NULL) {
+        if (S_write_add_string(ctx, "}") == 0) {
+            return 0;
+        }
+        return 1;
+    }
+    if (S_write_string(ctx, obj->name) == 0) {
+        return 0;
+    }
+    if (S_write_add_string(ctx, ":") == 0) {
+        return 0;
+    }
+    if (S_write_value(ctx, obj->value) == 0) {
+        return 0;
+    }
+    if (S_write_add_string(ctx, "}") == 0) {
+        return 0;
+    }
+    // TODO: add write value
+}
+
+char *S_write(S_object_t obj) {
+    S_write_ctx_t ctx;
+
+    if (obj == NULL) {
+        return NULL;
+    }
+    ctx = S_write_ctx_create();
+    if (ctx.data == NULL) {
+        return NULL;
+    }
+    if (S_write_object(&ctx, obj) == 0) {
+        return NULL;
+    }
+}
+
+S_value_t *S_object_get(S_object_t obj, const char *name, S_error_code_t *err) {
     S_object_t curr;
 
     for (curr = obj; curr != NULL; curr = curr->next) {
@@ -521,8 +607,7 @@ S_value_t *S_object_get(S_object_t obj, const char *name, S_error_code_t *err)
     return NULL;
 }
 
-S_bool_t S_object_get_bool(S_object_t obj, const char *name, S_error_code_t *err)
-{
+S_bool_t S_object_get_bool(S_object_t obj, const char *name, S_error_code_t *err) {
     S_value_t *value;
 
     value = S_object_get(obj, name, err);
@@ -530,8 +615,7 @@ S_bool_t S_object_get_bool(S_object_t obj, const char *name, S_error_code_t *err
     return ((S_boolean_t *) value)->value;
 }
 
-double S_object_get_number(S_object_t obj, const char *name, S_error_code_t *err)
-{
+double S_object_get_number(S_object_t obj, const char *name, S_error_code_t *err) {
     S_value_t *value;
 
     value = S_object_get(obj, name, err);
@@ -539,8 +623,7 @@ double S_object_get_number(S_object_t obj, const char *name, S_error_code_t *err
     return ((S_number_t *) value)->value;
 }
 
-S_object_t S_object_get_object(S_object_t obj, const char *name, S_error_code_t *err)
-{
+S_object_t S_object_get_object(S_object_t obj, const char *name, S_error_code_t *err) {
     S_value_t *value;
 
     value = S_object_get(obj, name, err);
@@ -548,8 +631,7 @@ S_object_t S_object_get_object(S_object_t obj, const char *name, S_error_code_t 
     return value;
 }
 
-char *S_object_get_string(S_object_t obj, const char *name, S_error_code_t *err)
-{
+char *S_object_get_string(S_object_t obj, const char *name, S_error_code_t *err) {
     S_value_t *value;
     char      *s;
 
@@ -566,8 +648,7 @@ char *S_object_get_string(S_object_t obj, const char *name, S_error_code_t *err)
     return s;
 }
 
-S_array_t *S_object_get_array(S_object_t obj, const char *name, S_error_code_t *err)
-{
+S_array_t *S_object_get_array(S_object_t obj, const char *name, S_error_code_t *err) {
     S_value_t *value;
 
     value = S_object_get(obj, name, err);
@@ -575,8 +656,7 @@ S_array_t *S_object_get_array(S_object_t obj, const char *name, S_error_code_t *
     return value;
 }
 
-S_value_t *S_array_get(S_array_t *arr, size_t i, S_error_code_t *err)
-{
+S_value_t *S_array_get(S_array_t *arr, size_t i, S_error_code_t *err) {
     if (arr == NULL) {
         if (err) {
             *err = S_ERROR_CODE_OBJECT_NOT_FOUND;
@@ -592,8 +672,7 @@ S_value_t *S_array_get(S_array_t *arr, size_t i, S_error_code_t *err)
     return arr->values[i];
 }
 
-S_bool_t S_array_get_bool(S_array_t *arr, size_t i, S_error_code_t *err)
-{
+S_bool_t S_array_get_bool(S_array_t *arr, size_t i, S_error_code_t *err) {
     S_value_t *value;
 
     value = S_array_get(arr, i, err);
@@ -601,8 +680,7 @@ S_bool_t S_array_get_bool(S_array_t *arr, size_t i, S_error_code_t *err)
     return ((S_boolean_t *) value)->value;
 }
 
-double S_array_get_number(S_array_t *arr, size_t i, S_error_code_t *err)
-{
+double S_array_get_number(S_array_t *arr, size_t i, S_error_code_t *err) {
     S_value_t *value;
 
     value = S_array_get(arr, i, err);
@@ -610,8 +688,7 @@ double S_array_get_number(S_array_t *arr, size_t i, S_error_code_t *err)
     return ((S_number_t *) value)->value;
 }
 
-S_object_t S_array_get_object(S_array_t *arr, size_t i, S_error_code_t *err)
-{
+S_object_t S_array_get_object(S_array_t *arr, size_t i, S_error_code_t *err) {
     S_value_t *value;
     
     value = S_array_get(arr, i, err);
@@ -619,8 +696,7 @@ S_object_t S_array_get_object(S_array_t *arr, size_t i, S_error_code_t *err)
     return value;
 }
 
-char *S_array_get_string(S_array_t *arr, size_t i, S_error_code_t *err)
-{
+char *S_array_get_string(S_array_t *arr, size_t i, S_error_code_t *err) {
     S_value_t *value;
     char      *s;
 
@@ -637,8 +713,7 @@ char *S_array_get_string(S_array_t *arr, size_t i, S_error_code_t *err)
     return s;
 }
 
-S_array_t *S_array_get_array(S_array_t *arr, size_t i, S_error_code_t *err)
-{
+S_array_t *S_array_get_array(S_array_t *arr, size_t i, S_error_code_t *err) {
     S_value_t *value;
 
     value = S_array_get(arr, i, err);

@@ -21,6 +21,7 @@ typedef enum {
 typedef unsigned char S_bool_t;
 
 S_object_t S_parse(char *data, size_t sz);
+char       *S_write(S_object_t obj);
 
 S_value_t  *S_object_get(S_object_t obj, const char *name, S_error_code_t *err);
 S_bool_t   S_object_get_bool(S_object_t obj, const char *name, S_error_code_t *err);
