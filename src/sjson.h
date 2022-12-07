@@ -41,10 +41,11 @@ char *S_write(S_object_t obj);
 /***
  * Helper functions for a JSON object.
  * These functions take the object, and the name of the
- * JSON 'object' to return.
+ * JSON field to return.
  * 
  * Example:
- * To get the value of the bool from o = {"x" : true}
+ * To get the value of the field 'x' from o = {"x" : true}
+ * as a bool
  * S_object_get_bool(o, "x", NULL);
  *
  * The error pointer will be set with the error code 
@@ -56,6 +57,14 @@ double     S_object_get_number(S_object_t obj, const char *name, S_error_code_t 
 S_object_t S_object_get_object(S_object_t obj, const char *name, S_error_code_t *err);
 char       *S_object_get_string(S_object_t obj, const char *name, S_error_code_t *err);
 S_array_t  *S_object_get_array(S_object_t obj, const char *name, S_error_code_t *err);
+
+/***
+ * Returns if the given field in an object is null
+ *
+ * Example:
+ * o = {"x" : null}
+ * S_object_is_null(o, "x", NULL) = true
+ ***/
 S_bool_t   S_object_is_null(S_object_t obj, const char *name, S_error_code_t *err);
 
 /***
@@ -78,6 +87,15 @@ double     S_array_get_number(S_array_t *arr, size_t i, S_error_code_t *err);
 S_object_t S_array_get_object(S_array_t *arr, size_t i, S_error_code_t *err);
 char       *S_array_get_string(S_array_t *arr, size_t i, S_error_code_t *err);
 S_array_t  *S_array_get_array(S_array_t *arr, size_t i, S_error_code_t *err);
+
+/***
+ * Returns if a given element in an array is null
+ *
+ * Example:
+ * a = [0, null]
+ * S_array_is_null(arr, 1, NULL) = true
+ * S_array_is_null(arr, 0, NULL) = false
+ ***/
 S_bool_t   S_array_is_null(S_array_t *arr, size_t i, S_error_code_t *err);
 
 /***
