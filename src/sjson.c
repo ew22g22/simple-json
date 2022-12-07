@@ -12,13 +12,23 @@
         if (err) {                            \
             *err = S_ERROR_CODE_INVALID_TYPE; \
         }                                     \
-        return (r);                           \  
+        return (r);                           \
     } 
+
+#define S_STRINGIZE_NX(x) #x
+#define S_STRINGIZE(x) S_STRINGIZE_NX(x)
+#define S_WRITE_NUMBER_FORMAT "%." S_STRINGIZE(S_WRITE_NUMBER_NUM_DECIMAL_POINT) "f"
 
 typedef struct {
     char *ptr;
     char *end;
 } S_ctx;
+
+typedef struct {
+    char   *data;
+    size_t len;
+    size_t size;
+} S_write_ctx_t;
 
 static void S_skip_whitespace(S_ctx *ctx) {
     while (ctx->ptr != ctx->end && (*ctx->ptr == ' ' 
@@ -34,6 +44,49 @@ static int S_skip_over_if_possible(S_ctx *ctx) {
     }
     ctx->ptr++;
     S_skip_whitespace(ctx);
+    return 1;
+}
+
+static S_write_ctx_t S_write_ctx_create(void) {
+    S_write_ctx_t ctx;
+
+    ctx.len = 0;
+    ctx.size = 256;
+    ctx.data = malloc(ctx.size);
+    return ctx;
+}
+
+static void S_write_ctx_destroy(S_write_ctx_t *ctx) {
+    if (ctx->data == NULL) {
+        return;
+    }
+    free(ctx->data);
+    ctx->data = NULL;
+}
+
+static int S_write_ctx_reallocate_if_needed(S_write_ctx_t *ctx, size_t extra) {
+    char *temp;
+
+    if (ctx->len + extra >= ctx->size - 1) {
+        ctx->size = 2 * (ctx->len + extra) + 1;
+        temp = realloc(ctx->data, ctx->size);
+        if (temp == NULL) {
+            return 0;
+        }
+        ctx->data = temp;
+    }
+    return 1;
+}
+
+static int S_write_add_string(S_write_ctx_t *ctx, const char *str) {
+    size_t len;
+
+    len = strlen(str);
+    if (S_write_ctx_reallocate_if_needed(ctx, len) == 0) {
+        return 0;
+    }
+    memcpy(&ctx->data[ctx->len], str, len);
+    ctx->len += len;
     return 1;
 }
 
@@ -54,6 +107,7 @@ typedef struct s_S_value {
 
 static S_value_t  *S_parse_value(S_ctx *ctx);
 static void       S_value_destroy(S_value_t **value);
+static int        S_write_value(S_write_ctx_t *ctx, S_value_t *val);
 
 /* ----------------------------------------------- */
 
@@ -109,6 +163,26 @@ static S_string_t *S_parse_string(S_ctx *ctx) {
     return str;
 }
 
+static int S_write_string(S_write_ctx_t *ctx, S_string_t *str) {
+    char *temp;
+
+    if (S_write_add_string(ctx, "\"") == 0) {
+        return 0;
+    }
+    temp = calloc(1, str->len + 1);
+    if (temp == NULL) {
+        return 0;
+    }
+    memcpy(temp, str->data, str->len);
+    if (S_write_add_string(ctx, temp) == 0) {
+        return 0;
+    }
+    if (S_write_add_string(ctx, "\"") == 0) {
+        return 0;
+    }
+    return 1;
+}
+
 /* ------------------------------------------------ */
 
 /* -------------------- Array -------------------- */
@@ -138,17 +212,15 @@ static void S_array_destroy(S_array_t **arr) {
     size_t i;
 
     if ((*arr)->values == NULL) {
-        (*arr)->num_values = 0;
-        *arr = NULL;
         free(*arr);
+        *arr = NULL;
         return;
     }
     for (i = 0; i < (*arr)->num_values; i++) {
         S_value_destroy(&(*arr)->values[i]);
     }
-    (*arr)->num_values = 0;
-    *arr = NULL;
     free(*arr);
+    *arr = NULL;
 }
 
 static int S_array_emplace_value(S_array_t *arr, S_value_t *value) {
@@ -217,6 +289,29 @@ static S_array_t *S_parse_array(S_ctx *ctx) {
     return arr;
 }
 
+static int S_write_array(S_write_ctx_t *ctx, S_array_t *arr) {
+    size_t i;
+
+    if (S_write_add_string(ctx, "[") == 0) {
+        return 0;
+    }
+    for (i = 0; i < arr->num_values - 1; i++) {
+        if (S_write_value(ctx, arr->values[i]) == 0) {
+            return 0;
+        }
+        if (S_write_add_string(ctx, ",") == 0) {
+            return 0;
+        }
+    }
+    if (arr->num_values > 0 && S_write_value(ctx, arr->values[arr->num_values - 1]) == 0)  {
+        return 0;
+    }
+    if (S_write_add_string(ctx, "]") == 0) {
+        return 0;
+    }
+    return 1;
+}
+
 /* ----------------------------------------------- */
 
 /* -------------------- Number -------------------- */
@@ -236,10 +331,6 @@ static S_number_t *S_number_create(void) {
     num->this_value.type = S_VALUE_TYPE_NUMBER;
     num->value = 0.0;
     return num;
-}
-
-static void S_number_destroy(S_number_t **num) {
-    free(*num);
 }
 
 static int S_number_check_if_possible(char c) {
@@ -266,6 +357,26 @@ static S_number_t *S_parse_number(S_ctx *ctx) {
     return num;
 }
 
+static int S_write_number(S_write_ctx_t *ctx, S_number_t *num) {
+    char *s;
+    int  n;
+
+    n = 1;
+    if (num->value != 0.0) {
+        n = (int) log10(abs((int) num->value)) + 1;
+    }
+    s = calloc(1, n + 1 + S_WRITE_NUMBER_NUM_DECIMAL_POINT + 1);
+    if (s == NULL) {
+        return 0;
+    }
+    sprintf(s, S_WRITE_NUMBER_FORMAT, num->value);
+    if (S_write_add_string(ctx, s) == 0) {
+        return 0;
+    }
+    free(s);
+    return 1;
+}
+
 /* ------------------------------------------------ */
 
 /* -------------------- Boolean -------------------- */
@@ -287,11 +398,6 @@ static S_boolean_t *S_boolean_create(void) {
     return b;
 }
 
-static void S_boolean_destroy(S_boolean_t **b) {
-    free(*b);
-    *b = NULL;
-}
-
 static S_boolean_t *S_parse_boolean(S_ctx *ctx) {
     S_boolean_t *b;
 
@@ -301,31 +407,46 @@ static S_boolean_t *S_parse_boolean(S_ctx *ctx) {
     }
     if (*ctx->ptr == 't') {
         if (ctx->ptr + 4 >= ctx->end) {
-            S_boolean_destroy(&b);
+            S_value_destroy((S_value_t **) &b);
             return NULL;
         }
         if (strncmp(ctx->ptr, "true", 4) != 0) {
-            S_boolean_destroy(&b);
+            S_value_destroy((S_value_t **) &b);
             return NULL;
         }
         ctx->ptr += 4;
         b->value = 1;
     } else if (*ctx->ptr == 'f') {
         if (ctx->ptr + 5 >= ctx->end) {
-            S_boolean_destroy(&b);
+            S_value_destroy((S_value_t **) &b);
             return NULL;
         }
         if (strncmp(ctx->ptr, "false", 5) != 0) {
-            S_boolean_destroy(&b);
+            S_value_destroy((S_value_t **) &b);
             return NULL;
         }
         ctx->ptr += 5;
         b->value = 0;
     } else {
-        S_boolean_destroy(&b);
+        S_value_destroy((S_value_t **) &b);
         return NULL;
     }
     return b;
+}
+
+static int S_write_boolean(S_write_ctx_t *ctx, S_boolean_t *b) {
+    if (b->value == 1) {
+        if (S_write_add_string(ctx, "true") == 0) {
+            return 0;
+        }
+        return 1;
+    } else if (b->value == 0) {
+        if (S_write_add_string(ctx, "false") == 0) {
+            return 0;
+        }
+        return 1;
+    }
+    return 0;
 }
 
 /* ------------------------------------------------- */
@@ -347,11 +468,6 @@ static S_null_t *S_null_create(void) {
     return n;
 }
 
-static void S_null_destroy(S_null_t **n) {
-    free(*n);
-    *n = NULL;
-}
-
 static S_null_t *S_parse_null(S_ctx *ctx) {
     S_null_t *n;
 
@@ -363,11 +479,18 @@ static S_null_t *S_parse_null(S_ctx *ctx) {
         return NULL;
     }
     if (strncmp(ctx->ptr, "null", 4) != 0) {
-        S_null_destroy(&n);
+        S_value_destroy((S_value_t **) &n);
         return NULL;
     }
     ctx->ptr += 4;
     return n;
+}
+
+static int S_write_null(S_write_ctx_t *ctx, S_null_t *n) {
+    if (S_write_add_string(ctx, "null") == 0) {
+        return 0;
+    }
+    return 1;
 }
 
 /* -------------------- Object -------------------- */
@@ -397,12 +520,14 @@ static void S_object_destroy(S_object_t *obj) {
     if ((*obj)->name != NULL) {
         S_string_destroy(&(*obj)->name);
     }
+    if ((*obj)->value != NULL) {
+        S_value_destroy(&(*obj)->value);
+    }
+    if ((*obj)->next != NULL) {
+        S_object_destroy(&(*obj)->next);
+    }
     free(*obj);
     *obj = NULL;
-}
-
-void S_object_destroy_recursively(S_object_t *obj) {
-    // TODO: implement
 }
 
 static S_object_t S_parse_object(S_ctx *ctx) {
@@ -454,105 +579,11 @@ static S_object_t S_parse_object(S_ctx *ctx) {
     return obj;
 }
 
-/* ------------------------------------------------ */
-
-static S_value_t *S_parse_value(S_ctx *ctx) {
-    if (*ctx->ptr == '"') {
-        return S_parse_string(ctx);
-    } else if (*ctx->ptr == '{') {
-        return S_parse_object(ctx);
-    } else if (*ctx->ptr == '[') {
-        return S_parse_array(ctx);
-    } else if (S_number_check_if_possible(*ctx->ptr)) {
-        return S_parse_number(ctx);
-    } else if (*ctx->ptr == 't' || *ctx->ptr == 'f') {
-        return S_parse_boolean(ctx);
-    } else if (*ctx->ptr == 'n') {
-        return S_parse_null(ctx);
-    } else {
-        return NULL;
-    }
-}
-
-static void S_value_destroy(S_value_t **value) {
-    switch ((*value)->type) {
-        case S_VALUE_TYPE_STRING:
-            S_string_destroy(value);
-            break;
-        case S_VALUE_TYPE_OBJECT:
-            S_object_destroy(value);
-            break;
-        case S_VALUE_TYPE_ARRAY:
-            S_array_destroy(value);
-            break;
-        case S_VALUE_TYPE_NUMBER:
-            S_number_destroy(value);
-            break;
-        default:
-            free(*value);
-            break;
-    }
-}
-
-S_object_t S_parse(char *data, size_t sz) {
-    S_ctx ctx;
-
-    ctx.ptr = data;
-    ctx.end = data + sz;
-    return S_parse_object(&ctx);
-}
-
-typedef struct {
-    char   *data;
-    size_t len;
-    size_t size;
-} S_write_ctx_t;
-
-S_write_ctx_t S_write_ctx_create(void) {
-    S_write_ctx_t ctx;
-
-    ctx.len = 0;
-    ctx.size = 256;
-    ctx.data = malloc(ctx.size);
-    return ctx;
-}
-
-void S_write_ctx_destroy(S_write_ctx_t *ctx) {
-    if (ctx->data != NULL) {
-        free(ctx->data);
-        ctx->data = NULL;
-    }
-}
-
-int S_write_ctx_reallocate_if_needed(S_write_ctx_t *ctx, size_t extra) {
-    char *temp;
-
-    if (ctx->len + extra >= ctx->size - 1) {
-        ctx->size = 2 * (ctx->len + extra) + 1;
-        temp = realloc(ctx->data, ctx->size);
-        if (temp == NULL) {
-            S_write_ctx_destroy(ctx);
+static int S_write_object(S_write_ctx_t *ctx, S_object_t obj, int sub /* sub object AKA {} already written */) {
+    if (sub == 0) {    
+        if (S_write_add_string(ctx, "{") == 0) {
             return 0;
         }
-        ctx->data = temp;
-    }
-    return 1;
-}
-
-int S_write_add_string(S_write_ctx_t *ctx, const char *str) {
-    size_t len;
-
-    len = strlen(str);
-    if (S_write_ctx_reallocate_if_needed(ctx, len) == 0) {
-        return 0;
-    }
-    memcpy(&ctx->data[ctx->len], str, len);
-    return 1;
-}
-
-int S_write_object(S_write_ctx_t *ctx, S_object_t obj) {
-    if (S_write_add_string(ctx, "{") == 0) {
-        return 0;
     }
     if (obj->name == NULL) {
         if (S_write_add_string(ctx, "}") == 0) {
@@ -569,10 +600,96 @@ int S_write_object(S_write_ctx_t *ctx, S_object_t obj) {
     if (S_write_value(ctx, obj->value) == 0) {
         return 0;
     }
+    if (obj->next != NULL) {
+        if (S_write_add_string(ctx, ",") == 0) {
+            return 0;
+        }
+        if (S_write_object(ctx, obj->next, 1 /* 1 as sub object */) == 0) {
+            return 0;
+        }
+    }
+    if (sub == 1) {
+        return 1;
+    }
     if (S_write_add_string(ctx, "}") == 0) {
         return 0;
     }
-    // TODO: add write value
+    return 1;
+}
+
+/* ------------------------------------------------ */
+
+static S_value_t *S_parse_value(S_ctx *ctx) {
+    if (*ctx->ptr == '"') {
+        return (S_value_t *) S_parse_string(ctx);
+    } else if (*ctx->ptr == '{') {
+        return (S_value_t *) S_parse_object(ctx);
+    } else if (*ctx->ptr == '[') {
+        return (S_value_t *) S_parse_array(ctx);
+    } else if (S_number_check_if_possible(*ctx->ptr)) {
+        return (S_value_t *) S_parse_number(ctx);
+    } else if (*ctx->ptr == 't' || *ctx->ptr == 'f') {
+        return (S_value_t *) S_parse_boolean(ctx);
+    } else if (*ctx->ptr == 'n') {
+        return (S_value_t *) S_parse_null(ctx);
+    } else {
+        return NULL;
+    }
+}
+
+static void S_value_destroy(S_value_t **value) {
+    switch ((*value)->type) {
+        case S_VALUE_TYPE_STRING:
+            S_string_destroy((S_string_t **) value);
+            break;
+        case S_VALUE_TYPE_OBJECT:
+            S_object_destroy((S_object_t *) value);
+            break;
+        case S_VALUE_TYPE_ARRAY:
+            S_array_destroy((S_array_t **) value);
+            break;
+        default:
+            free(*value);
+            *value = NULL;
+            break;
+    }
+}
+
+S_object_t S_parse(const char *data, size_t sz) {
+    S_ctx ctx;
+
+    ctx.ptr = (char *) data;
+    ctx.end = (char *) data + sz;
+    return S_parse_object(&ctx);
+}
+
+void S_destroy(S_object_t *obj) {
+    S_object_destroy(obj);
+}
+
+static int S_write_value(S_write_ctx_t *ctx, S_value_t *val) {
+    switch (val->type) {
+        case S_VALUE_TYPE_OBJECT:
+            return S_write_object(ctx, (S_object_t) val, 0);
+            break;
+        case S_VALUE_TYPE_ARRAY:
+            return S_write_array(ctx, (S_array_t *) val);
+            break;
+        case S_VALUE_TYPE_STRING:
+            return S_write_string(ctx, (S_string_t *) val);
+            break;
+        case S_VALUE_TYPE_NUMBER:
+            return S_write_number(ctx, (S_number_t *) val);
+            break;
+        case S_VALUE_TYPE_BOOLEAN:
+            return S_write_boolean(ctx, (S_boolean_t *) val);
+            break;
+        case S_VALUE_TYPE_NULL:
+            return S_write_null(ctx, (S_null_t *) val);
+            break;
+        default:
+            return 0;
+    }
 }
 
 char *S_write(S_object_t obj) {
@@ -585,9 +702,10 @@ char *S_write(S_object_t obj) {
     if (ctx.data == NULL) {
         return NULL;
     }
-    if (S_write_object(&ctx, obj) == 0) {
-        return NULL;
+    if (S_write_object(&ctx, obj, 0) == 0) {
+        S_write_ctx_destroy(&ctx);
     }
+    return ctx.data;
 }
 
 S_value_t *S_object_get(S_object_t obj, const char *name, S_error_code_t *err) {
@@ -628,7 +746,7 @@ S_object_t S_object_get_object(S_object_t obj, const char *name, S_error_code_t 
 
     value = S_object_get(obj, name, err);
     S_CHECK_VALUE(S_VALUE_TYPE_OBJECT, NULL);
-    return value;
+    return (S_object_t) value;
 }
 
 char *S_object_get_string(S_object_t obj, const char *name, S_error_code_t *err) {
@@ -653,7 +771,19 @@ S_array_t *S_object_get_array(S_object_t obj, const char *name, S_error_code_t *
 
     value = S_object_get(obj, name, err);
     S_CHECK_VALUE(S_VALUE_TYPE_ARRAY, NULL);
-    return value;
+    return (S_array_t *) value;
+}
+
+S_bool_t S_object_is_null(S_object_t obj, const char *name, S_error_code_t *err) {
+    S_value_t *value;
+
+    value = S_object_get(obj, name, err);
+    if (value == NULL) {
+        if (err) {
+            *err = S_ERROR_CODE_OBJECT_NOT_FOUND;
+        }
+    }
+    return value->type == S_VALUE_TYPE_NULL; 
 }
 
 S_value_t *S_array_get(S_array_t *arr, size_t i, S_error_code_t *err) {
@@ -693,7 +823,7 @@ S_object_t S_array_get_object(S_array_t *arr, size_t i, S_error_code_t *err) {
     
     value = S_array_get(arr, i, err);
     S_CHECK_VALUE(S_VALUE_TYPE_OBJECT, NULL);
-    return value;
+    return (S_object_t) value;
 }
 
 char *S_array_get_string(S_array_t *arr, size_t i, S_error_code_t *err) {
@@ -718,5 +848,17 @@ S_array_t *S_array_get_array(S_array_t *arr, size_t i, S_error_code_t *err) {
 
     value = S_array_get(arr, i, err);
     S_CHECK_VALUE(S_VALUE_TYPE_ARRAY, NULL);
-    return value;
+    return (S_array_t *) value;
+}
+
+S_bool_t S_array_is_null(S_array_t *arr, size_t i, S_error_code_t *err) {
+    S_value_t *value;
+
+    value = S_array_get(arr, i, err);
+    if (value == NULL) {
+        if (err) {
+            *err = S_ERROR_CODE_OBJECT_NOT_FOUND;
+        }
+    }
+    return value->type == S_VALUE_TYPE_NULL; 
 }
